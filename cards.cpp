@@ -1,60 +1,78 @@
+// OpenGL Libraries
 #include <GL/glut.h>
 #include <GL/freeglut.h>
+
+// Additional Libraries
 #include <math.h>
 #include <iostream>
 #include <vector>
 #include <string>
-#include <boost/assign/list_of.hpp>
-#include <boost/unordered_map.hpp>
-#include <boost/format.hpp>
 
-#include "SOIL.h"
+#include "SOIL.h"     //For loading textures
 
-#define PI 3.14159265
+#define PI 3.14159265 //Delicious
 
-#define CW 1.5f
-#define CH 2.0f
-#define RC 4.0f
+#define CW 1.5f       //Card Width
+#define CH 2.0f       //Card Height
+#define RC 4.0f       //Carousel Radius
 
-using boost::assign::map_list_of;
-using boost::format;
+//Path to texture files
+std::string tex_path = "./textures/";
 
+//Declared early for global variable
 struct card;
 
+// Window ID
 int winID;
-int NC;
-std::string tex_path = "./textures";
-static GLfloat spin = 0.0;
-static GLfloat sd = 1.0;
+
+//Camera Positioning
 GLfloat camx, camy, camz, losx, losy, losz, upx, upy, upz;
-bool deck[52];
-std::vector<card> cards;
+
+static int CC = 0;         //card count
+static GLfloat spin = 0.0; //for carousel rotation
+static GLfloat sd = 1.0;   //for carousel rotation direction
+bool deck[52];             //if !deck[i], card taken
+std::vector<card> cards;   //vector of card structs
 
 enum prefixes{ACE = 0,TWO = 1,THREE = 2,FOUR = 3,FIVE = 4,
               SIX = 5,SEVEN = 6,EIGHT = 7,NINE = 8,TEN = 9,
               JACK = 10,QUEEN = 11,KING = 12};
 enum suits{DIAMONDS = 1,CLUBS = 2,HEARTS = 3,SPADES = 4};
 
-const boost::unordered_map<prefixes,const char*> pre2str = map_list_of
-  (ACE, "ace_of_")
-  (TWO, "2_of_")
-  (THREE, "3_of_")
-  (FOUR, "4_of_")
-  (FIVE, "5_of_")
-  (SIX, "6_of_")
-  (SEVEN, "7_of_")
-  (EIGHT, "8_of_")
-  (NINE, "9_of_")
-  (TEN, "10_of_")
-  (JACK, "jack_of_")
-  (QUEEN, "queen_of_")
-  (KING, "king_of_");
+std::string pre2str(prefixes pre)
+{
+  std::string prefix = "_of_";
+  switch (pre)
+  {
+    case 0: prefix = "ace" + prefix; break;
+    case 1: prefix = "2" + prefix; break;
+    case 2: prefix = "3" + prefix; break;
+    case 3: prefix = "4" + prefix; break;
+    case 4: prefix = "5" + prefix; break;
+    case 5: prefix = "6" + prefix; break;
+    case 6: prefix = "7" + prefix; break;
+    case 7: prefix = "8" + prefix; break;
+    case 8: prefix = "9" + prefix; break;
+    case 9: prefix = "10" + prefix; break;
+    case 10: prefix = "jack" + prefix; break;
+    case 11: prefix = "queen" + prefix; break;
+    case 12: prefix = "king" + prefix; break;
+  }
+  return prefix;
+}
 
-const boost::unordered_map<suits,const char*> st2str = map_list_of
-  (DIAMONDS, "diamonds")
-  (CLUBS, "clubs")
-  (HEARTS, "hearts")
-  (SPADES, "spades");
+std::string st2str(suits s)
+{
+  std::string suit = "";
+  switch (s)
+  {
+      case 1: suit += "diamonds"; break;
+      case 2: suit += "clubs"; break;
+      case 3: suit += "hearts"; break;
+      case 4: suit += "spades"; break;
+  }
+  return suit;
+}
 
 typedef struct point
 {
@@ -74,6 +92,7 @@ typedef struct card
   prefixes prefix;
   suits suit;
   int index;
+  int id;
   std::string tfname;
   point tr,tl,bl,br,center;
   GLfloat theta;
@@ -81,13 +100,12 @@ typedef struct card
 
   card(int ind) : index (ind)
   {
-    if(ind > 51 || ind < 0 || !deck[ind])
+    if(ind > 51 || ind < 0 || !deck[ind]) //is the card valid?
         return;
 
-    int lb = 0;
-    std::stringstream ss;
-
-    tfname += tex_path;
+    int lb = 0; //lower bound, each boundary set based on known order of
+                //suits in un-shuffled deck
+    tfname += tex_path; //path to texture file
 
     if(ind < 13)
     {
@@ -112,13 +130,24 @@ typedef struct card
 
     prefix = (prefixes)(ind - lb);
 
-    ss << format ("%s%s.png") %pre2str.at(prefix) %st2str.at(suit);
-    tfname += '/';
-    tfname += ss.str();
+    tfname += pre2str(prefix);
+    tfname += st2str(suit);
+    tfname += ".png";
 
-    //std::cout<<tfname<<std::endl;
+    //now that the texture file is known, load the texture
+    texture = SOIL_load_OGL_texture
+      (
+        tfname.c_str(),
+        SOIL_LOAD_AUTO,
+        SOIL_CREATE_NEW_ID,
+        SOIL_FLAG_MIPMAPS | SOIL_FLAG_INVERT_Y
+      );
+    if(texture == 0)
+        std::cout<<"SOIL ERROR"<<std::endl;
 
     deck[ind] = false; // card taken, not available
+    CC++;
+    id = CC;
   }
 
   void getPoints(GLfloat theta_)
@@ -140,6 +169,25 @@ typedef struct card
     center.set(cx, 0.0f, cz);
   }
 
+  void render()
+  {
+    glTranslatef(center.x, center.y, center.z);
+    glRotatef(-spin, 0.0, 1.0, 0.0);
+    glTranslatef(-1*center.x, -1*center.y, -1*center.z);
+    //draw card
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glBegin(GL_QUADS);
+      glTexCoord2f(1.0f, 1.0f);
+      glVertex3f(tr.x, tr.y, tr.z);
+      glTexCoord2f(0.0f, 1.0f);
+      glVertex3f(tl.x, tl.y, tl.z);
+      glTexCoord2f(0.0f, 0.0f);
+      glVertex3f(bl.x, bl.y, bl.z);
+      glTexCoord2f(1.0f, 0.0f);
+      glVertex3f(br.x, br.y, br.z);
+    glEnd();
+  }
+
 } card;
 
 void fullDeck()
@@ -156,6 +204,7 @@ void initGL()
   glClearDepth(1.0f);
   glEnable(GL_DEPTH_TEST);
   glDepthFunc(GL_LEQUAL);
+  glEnable(GL_CULL_FACE);
   glEnable(GL_TEXTURE_2D);
   glShadeModel(GL_SMOOTH);
   glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
@@ -167,6 +216,8 @@ reshape(int w, int h)
   if(h == 0)
     h = 1;
 
+  //winw = w;
+  //winh = h;
   GLfloat aspect = (GLfloat)w / (GLfloat)h;
   glViewport(0, 0, w, h);       /* Establish viewing area to cover entire window. */
   glMatrixMode(GL_PROJECTION);  /* Start modifying the projection matrix. */
@@ -177,27 +228,15 @@ reshape(int w, int h)
 void makeCards(int numCards)
 {
   int index = rand() % 52;
-  GLfloat offset = (360.0f / (GLfloat)numCards);
-  GLfloat theta = 90.0;
+  GLfloat offset = (360.0f / (GLfloat)52);
+  GLfloat theta = 0.0f;
 
-  glColor3f(1.0f, 1.0f, 1.0f);
   for(int i = 0; i < numCards; i++)
   {
     //create a card
     while (!deck[index])
       index = rand() % 52;
     card c = card(index);
-
-    //texture stuff
-    c.texture = SOIL_load_OGL_texture
-      (
-        c.tfname.c_str(),
-        SOIL_LOAD_AUTO,
-        SOIL_CREATE_NEW_ID,
-        SOIL_FLAG_INVERT_Y
-      );
-    if(c.texture == 0)
-        std::cout<<"SOIL ERROR"<<std::endl;
 
     c.getPoints(theta);
 
@@ -212,57 +251,75 @@ void nameCards()
   int i = 1;
   for(card n: cards)
   {
-    std::cout<<"card "<<i<<" name: "<<n.tfname<<std::endl;
+    std::cout<<"Card ID: "<<n.id
+             <<"\n  Card Name: " <<pre2str(n.prefix)<<st2str(n.suit)
+             <<"\n  Texture file path: "<<n.tfname
+             <<"\n  Center Coordinates:"
+             <<"\n    x: "<<n.center.x
+             <<"\n    y: "<<n.center.y
+             <<"\n    z: "<<n.center.z
+             <<std::endl;
     i++;
   }
 }
 
 void drawCards()
 {
-  for(card n: cards)
+  if(CC > -1)
+    for(card n: cards)
+    {
+      glPushMatrix();
+      n.render();
+      glPopMatrix();
+    }
+}
+
+void addCard()
+{
+  if (CC < 52)
   {
-    glPushMatrix();
-    //rotate cards
-    glTranslatef(n.center.x, n.center.y, n.center.z);
-    glRotatef(-spin, 0.0, 1.0, 0.0);
-    glTranslatef(-1*n.center.x, -1*n.center.y, -1*n.center.z);
-    //draw card
-    glBindTexture(GL_TEXTURE_2D, n.texture);
-    glBegin(GL_QUADS);
-      glTexCoord2f(1.0f, 1.0f);
-      glVertex3f(n.tr.x, n.tr.y, n.tr.z);
-      glTexCoord2f(0.0f, 1.0f);
-      glVertex3f(n.tl.x, n.tl.y, n.tl.z);
-      glTexCoord2f(0.0f, 0.0f);
-      glVertex3f(n.bl.x, n.bl.y, n.bl.z);
-      glTexCoord2f(1.0f, 0.0f);
-      glVertex3f(n.br.x, n.br.y, n.br.z);
-    glEnd();
-    glPopMatrix();
+    int index = rand() % 52;
+    GLfloat offset = 360.0f/52;
+
+    GLfloat theta = 0.0;
+
+    for(card n : cards)
+    {
+      theta += offset;
+    }
+
+    //create a card
+    while (!deck[index])
+      index = rand() % 52;
+    card c = card(index);
+
+    c.getPoints(theta);
+    cards.push_back(c);
   }
 }
 
-void updateCards()
+void removeCard()
 {
-  GLfloat offset = 360.0/NC;
-  for(card c : cards)
+  if(CC > 0)
   {
-    if(sd > 0)
-      c.getPoints(c.theta+offset);
-    else
-      c.getPoints(c.theta-offset);
+    card c = cards.back();
+    deck[c.index] = true;
+    CC--;
+    cards.pop_back();
   }
 }
 
 void display(void)
 {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  glClearDepth(1.0f);
+
   glMatrixMode(GL_MODELVIEW);
   glLoadIdentity();
 
-  gluLookAt(camx, camy, camz,  //Position
+  gluLookAt(camx, camy, camz, //Position
             losx, losy, losz, //Line of sight
-            upx, upy, upz); //Up vector
+            upx, upy, upz);   //Up vector
 
   glTranslatef(0.0f, 0.0f, 0.0f);
   glRotatef(spin, 0.0, 0.5, 0.0);
@@ -270,13 +327,12 @@ void display(void)
 
   //draw cards
   drawCards();
-  updateCards();
 
   glutSwapBuffers();
 }
 
 void spinDisp(void) {
-    spin = spin + (2.0 * sd);
+    spin = spin + (0.50 * sd);
     if(spin > 360.0)
       spin = spin - 360;
     if(spin < -360.0)
@@ -286,11 +342,38 @@ void spinDisp(void) {
 
 void keys(unsigned char key, int x, int y)
 {
+  static GLfloat oldsd = 0;
   switch (key)
   {
-    case 27:
+    case 27:  //'esc'
       glutDestroyWindow(winID);
       exit(0);
+      break;
+    case 97:  //'a'
+      addCard();
+      break;
+    case 114: //'r'
+      if(CC > 0)
+        removeCard();
+      break;
+    case 105: //'i'
+      std::cout<<"\n#Cards: "<<CC<<"\n"<<std::endl;
+      break;
+    case 118: //'v'
+      std::cout<<"\nVerbose Card Data:\n"<<std::endl;
+      nameCards();
+      break;
+    case 32:  //'space'
+      if(oldsd == 0)
+      {
+        oldsd = sd;
+        sd = 0;
+      }
+      else
+      {
+        sd = oldsd;
+        oldsd = 0;
+      }
       break;
   }
   glutPostRedisplay();
@@ -324,8 +407,6 @@ void mouse(int button, int state, int x, int y)
         sd = 1.0;
         glutIdleFunc(spinDisp);
       }
-      else
-        glutIdleFunc(NULL);
       break;
     case GLUT_RIGHT_BUTTON:
       if(state == GLUT_DOWN)
@@ -333,34 +414,36 @@ void mouse(int button, int state, int x, int y)
         sd = -1.0;
         glutIdleFunc(spinDisp);
       }
-      else
-        glutIdleFunc(NULL);
       break;
   }
 }
 
-int
-main(int argc, char **argv)
+void initCam()
 {
-  if(argc < 2)
-      NC = 26;
-  else
-      NC = atoi(argv[1]);
-  if(NC > 52)
-  {
-    std::cout<<"Too many cards specified, try a value <= 52."<<std::endl;
-    exit(0);
-  }
   //Initial View Parameters
   camx = 0.0f; camy = 6.0f; camz = 9.0f;
   losx = 0.0f; losy = -1.0f; losz = -1.0f;
   upx = 0.0f; upy = 1.0f; upz = -3.0f;
+}
 
+int main(int argc, char **argv)
+{
+  int NC;
+  if(argc < 2)
+      NC = 5;
+  else
+      NC = atoi(argv[1]);
+  if(NC > 52 || NC <1)
+  {
+    std::cout<<"Invalid number of cards specified, try a value 0 < x < 53."<<std::endl;
+    exit(0);
+  }
+  initCam();
   fullDeck();
   glutInit(&argc, argv);
-  glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB);
+  glutInitDisplayMode(GLUT_DEPTH | GLUT_DOUBLE | GLUT_RGB);
   glutInitWindowSize(640, 480);
-  winID = glutCreateWindow("card carousel");
+  winID = glutCreateWindow("Card Carousel");
   makeCards(NC);
   //nameCards(); //sanity
   glutDisplayFunc(display);
@@ -370,5 +453,5 @@ main(int argc, char **argv)
   glutMouseFunc(mouse);
   initGL();
   glutMainLoop();
-  return 0;             /* ANSI C requires main to return int. */
+  return 0;
 }
